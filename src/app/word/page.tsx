@@ -75,7 +75,7 @@ export default function WordEditorPage() {
   const exportDocx = useCallback(async () => {
     setIsExporting(true);
     try {
-      const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, NumberingConfig } = await import("docx");
+      const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = await import("docx");
 
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlRef.current, "text/html");
