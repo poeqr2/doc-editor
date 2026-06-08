@@ -8,7 +8,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { TextStyle } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
-import { useEffect, useCallback } from "react";
+import { useEffect, useRef } from "react";
 
 interface RichTextEditorProps {
   content: string;
@@ -16,6 +16,11 @@ interface RichTextEditorProps {
 }
 
 export default function RichTextEditor({ content, onChange }: RichTextEditorProps) {
+  // FIX: Track whether initial content has been loaded.
+  // The original code ran setContent() on every `content` prop change,
+  // which would reset the editor cursor/content whenever the parent re-rendered.
+  const initializedRef = useRef(false);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
@@ -26,14 +31,17 @@ export default function RichTextEditor({ content, onChange }: RichTextEditorProp
       FontFamily,
       Color,
     ],
-    content,
+    content: "",
     editorProps: { attributes: { class: "tiptap focus:outline-none" } },
     onUpdate: ({ editor }) => { onChange(editor.getHTML()); },
   });
 
+  // Only set content once when the initial HTML arrives from mammoth.
+  // After that, the editor owns its state — don't overwrite it.
   useEffect(() => {
-    if (editor && content && editor.getHTML() !== content) {
-      editor.commands.setContent(content);
+    if (editor && content && !initializedRef.current) {
+      editor.commands.setContent(content, false);
+      initializedRef.current = true;
     }
   }, [content, editor]);
 
@@ -58,17 +66,33 @@ export default function RichTextEditor({ content, onChange }: RichTextEditorProp
         <Btn onClick={() => editor.chain().focus().setTextAlign("center").run()} active={editor.isActive({ textAlign: "center" })} title="Center">≡</Btn>
         <Btn onClick={() => editor.chain().focus().setTextAlign("right").run()} active={editor.isActive({ textAlign: "right" })} title="Right">⫸</Btn>
         <Div />
-        <select onChange={(e) => editor.chain().focus().setFontFamily(e.target.value).run()} className="bg-surface border border-card-border rounded px-2 py-1 text-xs text-foreground" title="Font">
-          <option value="">Default</option>
+        <select
+          className="bg-surface border border-card-border rounded px-2 py-1 text-xs text-foreground"
+          title="Font"
+          value=""
+          onChange={(e) => {
+            if (e.target.value) editor.chain().focus().setFontFamily(e.target.value).run();
+          }}
+        >
+          <option value="">Font</option>
           <option value="Arial">Arial</option>
           <option value="Georgia">Georgia</option>
           <option value="Times New Roman">Times</option>
           <option value="Courier New">Courier</option>
           <option value="Verdana">Verdana</option>
         </select>
-        <div className="relative">
-          <div className="w-6 h-6 rounded border border-card-border bg-red-500" />
-          <input type="color" defaultValue="#ff0000" onChange={(e) => editor.chain().focus().setColor(e.target.value).run()} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" title="Color" />
+        <div className="relative" title="Text color">
+          <div
+            className="w-6 h-6 rounded border border-card-border"
+            style={{ backgroundColor: editor.getAttributes("textStyle").color || "#000000" }}
+          />
+          <input
+            type="color"
+            value={editor.getAttributes("textStyle").color || "#000000"}
+            onChange={(e) => editor.chain().focus().setColor(e.target.value).run()}
+            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+            title="Color"
+          />
         </div>
         <Div />
         <Btn onClick={() => editor.chain().focus().toggleBlockquote().run()} active={editor.isActive("blockquote")} title="Quote">"</Btn>

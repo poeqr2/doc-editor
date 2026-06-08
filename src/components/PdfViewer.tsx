@@ -59,7 +59,7 @@ export default function PdfViewer({
   const onRenderSuccess = useCallback(() => {
     // Re-render annotations whenever page renders
     redrawCanvas();
-  }, []);
+  }, [redrawCanvas]);
 
   // Draw annotations on canvas
   const redrawCanvas = useCallback(() => {
@@ -103,8 +103,10 @@ export default function PdfViewer({
   }, [annotations]);
 
   useEffect(() => {
-    redrawCanvas();
-  }, [annotations, redrawCanvas]);
+    // Small delay to ensure canvas is ready after page render
+    const timer = setTimeout(() => redrawCanvas(), 50);
+    return () => clearTimeout(timer);
+  }, [annotations, redrawCanvas, currentPageNum]);
 
   const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
