@@ -7,7 +7,7 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import type { Tool, Annotation } from "@/app/pdf/page";
 
 // Set up the PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
 
 interface PdfViewerProps {
   url: string;
