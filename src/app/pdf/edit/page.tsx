@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useTheme } from "@/components/ThemeProvider";
-import { extractPdfText } from "@/lib/pdfTextExtractor";
+import { extractPdfTextViaDom } from "@/lib/pdfTextExtractor";
 
 const RichTextEditor = dynamic(() => import("@/components/RichTextEditor"), {
   ssr: false,
@@ -39,9 +39,9 @@ export default function PdfTextEditorPage() {
     const extract = async () => {
       try {
         setExtracting(true);
-        const result = await extractPdfText(dataUrl);
-        htmlRef.current = result.html;
-        setHtml(result.html);
+        const html = await extractPdfTextViaDom(dataUrl);
+        htmlRef.current = html;
+        setHtml(html);
         setIsLoaded(true);
       } catch (err) {
         console.error("Failed to extract PDF text:", err);

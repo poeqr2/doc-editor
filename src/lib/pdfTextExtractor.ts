@@ -1,7 +1,86 @@
 /**
- * Extract text from PDF → editable HTML.
- * Robust approach: sort all items into reading order, then dump.
+ * Extract text from PDF by rendering it invisibly and reading the text layer DOM.
+ * This uses pdf.js's built-in text extraction (which handles reading order correctly)
+ * instead of manual coordinate sorting.
  */
+export async function extractPdfTextViaDom(pdfDataUrl: string): Promise<string> {
+  // @ts-ignore — pdfjs-dist v6
+  const pdfjs = await import("pdfjs-dist") as any;
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+
+  const base64 = pdfDataUrl.split(",")[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const paragraphs: string[] = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1 });
+
+    // Create a hidden container for text layer rendering
+    const container = document.createElement("div");
+    container.style.position = "absolute";
+    container.style.left = "-9999px";
+    container.style.top = "0";
+    container.style.width = `${viewport.width}px`;
+    container.style.height = `${viewport.height}px`;
+    document.body.appendChild(container);
+
+    // Render the text layer using pdf.js
+    const textContent = await page.getTextContent();
+
+    // pdf.js TextLayer renders spans with correct reading order positioning
+    const textLayer = new pdfjs.TextLayer({
+      textContentSource: textContent,
+      container,
+      viewport,
+    });
+    await textLayer.render();
+
+    // Now read the rendered spans from DOM — they're in reading order!
+    const spans = container.querySelectorAll("span");
+    let lastY = -9999;
+    let currentLine: string[] = [];
+
+    for (const span of spans) {
+      const text = span.textContent?.trim();
+      if (!text) continue;
+
+      // Get Y position from the span's transform
+      const style = span.style;
+      const transform = style.transform || "";
+      // Extract Y from matrix: matrix(1, 0, 0, 1, x, y)
+      const match = transform.match(/matrix\([^,]+,[^,]+,[^,]+,[^,]+,[^,]+,\s*([-\d.]+)\)/);
+      const y = match ? parseFloat(match[1]) : 0;
+
+      // If Y changed significantly, it's a new line
+      if (lastY > -9000 && Math.abs(y - lastY) > 2) {
+        if (currentLine.length > 0) {
+          paragraphs.push(currentLine.join(" "));
+          currentLine = [];
+        }
+      }
+
+      currentLine.push(text);
+      lastY = y;
+    }
+
+    if (currentLine.length > 0) {
+      paragraphs.push(currentLine.join(" "));
+    }
+
+    // Clean up
+    document.body.removeChild(container);
+  }
+
+  if (paragraphs.length === 0) return "<p></p>";
+  return paragraphs.map((p) => `<p>${esc(p)}</p>`).join("\n");
+}
+
+// Keep the old function for backwards compatibility
 export interface TextBlock {
   text: string;
   x: number;
@@ -53,14 +132,20 @@ export async function extractPdfText(pdfDataUrl: string): Promise<{
     }
   }
 
-  const html = buildSimpleHtml(allBlocks);
-  return { html, blocks: allBlocks, pageDimensions };
+  // Try the DOM-based extraction first, fall back to dumb approach
+  try {
+    const html = await extractPdfTextViaDom(pdfDataUrl);
+    return { html, blocks: allBlocks, pageDimensions };
+  } catch {
+    // Fallback: simple concatenation without sorting
+    const html = buildDumbHtml(allBlocks);
+    return { html, blocks: allBlocks, pageDimensions };
+  }
 }
 
-function buildSimpleHtml(blocks: TextBlock[]): string {
+function buildDumbHtml(blocks: TextBlock[]): string {
   if (blocks.length === 0) return "<p></p>";
 
-  // Group by page
   const pages = new Map<number, TextBlock[]>();
   for (const b of blocks) {
     if (!pages.has(b.pageNum)) pages.set(b.pageNum, []);
@@ -71,88 +156,23 @@ function buildSimpleHtml(blocks: TextBlock[]): string {
 
   for (const pageNum of Array.from(pages.keys()).sort((a, b) => a - b)) {
     const pageBlocks = pages.get(pageNum)!;
-
-    // Step 1: Sort into rough reading order
-    // Use row-binning: group items into rows by Y proximity, then sort rows top-to-bottom,
-    // and within each row sort left-to-right.
-    const sorted = sortIntoReadingOrder(pageBlocks);
-
-    // Step 2: Walk through sorted items and build lines
-    let lines: string[][] = [[]];
+    // Don't sort — use content stream order (often reading order for simple PDFs)
     let lastY = -9999;
+    let line: string[] = [];
 
-    for (const block of sorted) {
-      // New line if Y changed by more than half the font size
-      const yDelta = Math.abs(block.y - lastY);
-      const threshold = block.fontSize * 0.6;
-
-      if (lastY > -9000 && yDelta > threshold) {
-        lines.push([]);
+    for (const block of pageBlocks) {
+      if (lastY > -9000 && Math.abs(block.y - lastY) > 3) {
+        if (line.length > 0) result.push(line.join(" "));
+        line = [];
       }
-      lines[lines.length - 1].push(block.text);
+      line.push(block.text);
       lastY = block.y;
     }
-
-    // Convert lines to text
-    for (const line of lines) {
-      if (line.length > 0) {
-        result.push(line.join(" "));
-      }
-    }
+    if (line.length > 0) result.push(line.join(" "));
   }
 
-  // Wrap each line in <p> tags
   if (result.length === 0) return "<p></p>";
-  return result.map((line) => `<p>${esc(line)}</p>`).join("");
-}
-
-/**
- * Sort blocks into reading order using row-binning.
- * Items with similar Y values are grouped into rows,
- * rows are sorted top-to-bottom, items within row sorted left-to-right.
- */
-function sortIntoReadingOrder(blocks: TextBlock[]): TextBlock[] {
-  if (blocks.length <= 1) return blocks;
-
-  // Find the median font size to determine row height threshold
-  const sizes = blocks.map((b) => b.fontSize).sort((a, b) => a - b);
-  const medianSize = sizes[Math.floor(sizes.length / 2)];
-  const rowThreshold = medianSize * 0.6;
-
-  // Bin items into rows by Y proximity
-  const rows: TextBlock[][] = [];
-  const sorted = [...blocks].sort((a, b) => a.y - b.y);
-
-  for (const block of sorted) {
-    // Find an existing row this item belongs to
-    let placed = false;
-    for (const row of rows) {
-      // Check if block's Y is close to the row's average Y
-      const avgY = row.reduce((s, b) => s + b.y, 0) / row.length;
-      if (Math.abs(block.y - avgY) <= rowThreshold) {
-        row.push(block);
-        placed = true;
-        break;
-      }
-    }
-    if (!placed) {
-      rows.push([block]);
-    }
-  }
-
-  // Sort rows by average Y, then items within each row by X
-  rows.sort((a, b) => {
-    const avgA = a.reduce((s, b) => s + b.y, 0) / a.length;
-    const avgB = b.reduce((s, b) => s + b.y, 0) / b.length;
-    return avgA - avgB;
-  });
-
-  const result: TextBlock[] = [];
-  for (const row of rows) {
-    row.sort((a, b) => a.x - b.x);
-    result.push(...row);
-  }
-  return result;
+  return result.map((l) => `<p>${esc(l)}</p>`).join("\n");
 }
 
 function esc(t: string): string {
