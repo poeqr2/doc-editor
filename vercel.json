@@ -1,6 +1,6 @@
 {
   "buildCommand": "npx next build --webpack",
-  "installCommand": "npm install --legacy-peer-deps",
+  "installCommand": "yarn install --network-timeout 120000",
   "framework": "nextjs",
   "outputDirectory": ".next"
 }
