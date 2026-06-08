@@ -243,7 +243,7 @@ export default function PdfViewer({
     : "default";
 
   return (
-    <div ref={containerRef} className="relative inline-block">
+    <div ref={containerRef} className="relative inline-block" style={{ position: "relative" }}>
       <Document
         file={url}
         onLoadSuccess={onDocumentLoad}

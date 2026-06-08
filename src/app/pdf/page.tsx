@@ -190,7 +190,7 @@ export default function PdfEditorPage() {
           </button>
           <button
             onClick={exportPdf}
-            disabled={isExporting || annotations.length === 0}
+            disabled={isExporting || !pdfBytes}
             className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isExporting ? "Exporting..." : "⬇ Download PDF"}

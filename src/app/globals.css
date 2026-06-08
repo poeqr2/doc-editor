@@ -75,6 +75,13 @@ body {
   top: 0;
   left: 0;
   cursor: crosshair;
+  z-index: 10;
+}
+
+/* Disable pointer events on react-pdf text/annotation layers so canvas gets them */
+.react-pdf__Page__textContent,
+.react-pdf__Page__annotations {
+  pointer-events: none !important;
 }
 
 /* TipTap editor styles */
