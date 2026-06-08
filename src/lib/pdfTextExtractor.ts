@@ -18,7 +18,8 @@ export async function extractPdfText(pdfDataUrl: string): Promise<{
   blocks: TextBlock[];
   pageDimensions: { width: number; height: number }[];
 }> {
-  const { pdfjs } = await import("pdfjs-dist");
+  // @ts-ignore — pdfjs-dist v6 has no default export
+  const pdfjs = await import("pdfjs-dist") as any;
   
   pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
