@@ -1,7 +1,7 @@
 /**
- * Extract text from PDF and convert to editable HTML.
- * Strategy: use pdf.js text content items (already in reading order),
- * join with spaces, break on Y-position changes, paragraph on bigger gaps.
+ * Extract text from PDF → editable HTML.
+ * DUMB approach: just dump all text in reading order.
+ * No fancy grouping. TipTap handles formatting.
  */
 export interface TextBlock {
   text: string;
@@ -21,15 +21,12 @@ export async function extractPdfText(pdfDataUrl: string): Promise<{
 }> {
   // @ts-ignore — pdfjs-dist v6
   const pdfjs = await import("pdfjs-dist") as any;
-
   pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
   const base64 = pdfDataUrl.split(",")[1];
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
   const pdf = await pdfjs.getDocument({ data: bytes }).promise;
   const allBlocks: TextBlock[] = [];
@@ -37,32 +34,31 @@ export async function extractPdfText(pdfDataUrl: string): Promise<{
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 1 });
-    pageDimensions.push({ width: viewport.width, height: viewport.height });
-
+    const vp = page.getViewport({ scale: 1 });
+    pageDimensions.push({ width: vp.width, height: vp.height });
     const content = await page.getTextContent();
 
     for (const item of content.items) {
-      if (!("str" in item) || !item.str.trim()) continue;
+      if (!("str" in item) || !item.str) continue;
       const tx = item.transform;
       allBlocks.push({
         text: item.str,
         x: tx[4],
-        y: viewport.height - tx[5],
+        y: vp.height - tx[5],
         width: item.width,
         height: item.height,
         fontSize: Math.abs(tx[3]) || 12,
-        fontName: item.fontName || "unknown",
+        fontName: item.fontName || "",
         pageNum,
       });
     }
   }
 
-  const html = buildHtmlFromBlocks(allBlocks);
+  const html = buildSimpleHtml(allBlocks);
   return { html, blocks: allBlocks, pageDimensions };
 }
 
-function buildHtmlFromBlocks(blocks: TextBlock[]): string {
+function buildSimpleHtml(blocks: TextBlock[]): string {
   if (blocks.length === 0) return "<p></p>";
 
   // Group by page
@@ -72,93 +68,63 @@ function buildHtmlFromBlocks(blocks: TextBlock[]): string {
     pages.get(b.pageNum)!.push(b);
   }
 
-  const paragraphs: string[] = [];
+  const result: string[] = [];
 
-  for (const pageNum of [...pages.keys()].sort((a, b) => a - b)) {
+  for (const pageNum of Array.from(pages.keys()).sort((a, b) => a - b)) {
     const pageBlocks = pages.get(pageNum)!;
 
-    // Sort top-to-bottom, left-to-right
+    // Sort: top-to-bottom, then left-to-right
+    // Use a reasonable Y tolerance — items on the same visual line
+    // have Y values within ~2px of each other
     pageBlocks.sort((a, b) => {
+      // Primary sort by Y (top = small Y first)
       const yDiff = a.y - b.y;
-      if (Math.abs(yDiff) > 3) return yDiff;
+      if (Math.abs(yDiff) > 2) return yDiff;
+      // Secondary sort by X (left = small X first)
       return a.x - b.x;
     });
 
-    // Calculate average line height for gap detection
-    const fontSizes = pageBlocks.map((b) => b.fontSize);
-    const medianFontSize =
-      fontSizes.length > 0
-        ? fontSizes.sort((a, b) => a - b)[Math.floor(fontSizes.length / 2)]
-        : 12;
+    // Walk through and build lines
+    // A "line" = consecutive items where Y barely changes
+    let currentLineY = -9999;
+    let currentLineItems: string[] = [];
 
-    // Build lines by walking through sorted blocks
-    const lines: { text: string; y: number; fontSize: number }[] = [];
-    let lineText = "";
-    let lineY = -9999;
-    let lineFontSize = medianFontSize;
-    let lineX = -9999;
+    const flushLine = () => {
+      if (currentLineItems.length > 0) {
+        result.push(currentLineItems.join(" "));
+        currentLineItems = [];
+      }
+    };
 
     for (const block of pageBlocks) {
-      const yDiff = Math.abs(block.y - lineY);
+      const yDelta = Math.abs(block.y - currentLineY);
 
-      if (lineY < -9000 || yDiff <= medianFontSize * 0.5) {
-        // Same line
-        if (lineX > -9000) {
-          const gap = block.x - lineX;
-          if (gap > medianFontSize * 0.3) {
-            lineText += " "; // horizontal gap = space
-          }
+      if (currentLineY < -9000) {
+        // First item on this page
+        currentLineY = block.y;
+        currentLineItems.push(block.text);
+      } else if (yDelta <= 2) {
+        // Same line (Y barely changed)
+        // Add space if there's a horizontal gap
+        if (currentLineItems.length > 0) {
+          currentLineItems.push(" ");
         }
-        lineText += block.text;
-        lineX = block.x + block.width;
-        lineY = block.y;
-        lineFontSize = block.fontSize;
+        currentLineItems.push(block.text);
       } else {
         // New line
-        if (lineText.trim()) {
-          lines.push({ text: lineText.trim(), y: lineY, fontSize: lineFontSize });
-        }
-        lineText = block.text;
-        lineY = block.y;
-        lineX = block.x + block.width;
-        lineFontSize = block.fontSize;
+        flushLine();
+        currentLineY = block.y;
+        currentLineItems.push(block.text);
       }
     }
-    if (lineText.trim()) {
-      lines.push({ text: lineText.trim(), y: lineY, fontSize: lineFontSize });
-    }
-
-    // Group lines into paragraphs
-    // A new paragraph = gap between lines is > 1.4x the typical line spacing
-    let paraLines: string[] = [];
-    let prevY = -9999;
-
-    for (const line of lines) {
-      const gap = prevY > -9000 ? line.y - prevY : 0;
-
-      // New paragraph if gap is significantly larger than line height
-      if (prevY > -9000 && gap > medianFontSize * 1.8) {
-        if (paraLines.length > 0) {
-          paragraphs.push(`<p>${escapeHtml(paraLines.join(" "))}</p>`);
-          paraLines = [];
-        }
-      }
-
-      paraLines.push(line.text);
-      prevY = line.y;
-    }
-
-    if (paraLines.length > 0) {
-      paragraphs.push(`<p>${escapeHtml(paraLines.join(" "))}</p>`);
-    }
+    flushLine();
   }
 
-  return paragraphs.join("\n") || "<p></p>";
+  // Wrap each line in <p> tags — TipTap will handle it
+  if (result.length === 0) return "<p></p>";
+  return result.map((line) => `<p>${esc(line)}</p>`).join("");
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function esc(t: string): string {
+  return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
