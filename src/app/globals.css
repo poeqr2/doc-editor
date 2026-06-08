@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --card-bg: #1a1a2e;
+  --card-border: #2a2a4a;
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --secondary: #22d3ee;
+  --muted: #6b7280;
+  --surface: #1e1e32;
+}
+
+.light-theme {
+  --background: #f8fafc;
+  --foreground: #1e293b;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --secondary: #0891b2;
+  --muted: #9ca3af;
+  --surface: #f1f5f9;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card-bg: var(--card-bg);
+  --color-card-border: var(--card-border);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-secondary: var(--secondary);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* PDF page container */
+.pdf-page-wrapper {
+  position: relative;
+  margin: 12px auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.annotation-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: crosshair;
+}
+
+/* TipTap editor styles */
+.tiptap {
+  outline: none;
+  min-height: 400px;
+  padding: 1rem;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.tiptap h1 { font-size: 2em; font-weight: bold; margin: 0.5em 0; }
+.tiptap h2 { font-size: 1.5em; font-weight: bold; margin: 0.5em 0; }
+.tiptap h3 { font-size: 1.25em; font-weight: bold; margin: 0.5em 0; }
+.tiptap p { margin: 0.5em 0; }
+.tiptap ul { list-style-type: disc; padding-left: 2em; margin: 0.5em 0; }
+.tiptap ol { list-style-type: decimal; padding-left: 2em; margin: 0.5em 0; }
+.tiptap li { margin: 0.25em 0; }
+.tiptap blockquote {
+  border-left: 3px solid var(--primary);
+  padding-left: 1em;
+  margin: 0.5em 0;
+  font-style: italic;
+}
+
+/* Animation keyframes */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(99, 102, 241, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.6); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
