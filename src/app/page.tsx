@@ -126,7 +126,7 @@ export default function Home() {
             <div>
               <h2 className="text-2xl font-bold mb-2">PDF Editor</h2>
               <p className="text-muted text-sm">
-                Highlight, draw, add text and shapes. Annotate your PDFs with ease.
+                Extract text, edit content, annotate, draw, and export back to PDF.
               </p>
             </div>
             <span className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/20 text-primary text-sm font-medium group-hover:bg-primary/30 transition-colors">

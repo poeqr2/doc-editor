@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useTheme } from "@/components/ThemeProvider";
 import { PDFDocument } from "pdf-lib";
@@ -34,6 +35,7 @@ export interface Annotation {
 
 export default function PdfEditorPage() {
   const { theme, toggle } = useTheme();
+  const router = useRouter();
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState<string>("document.pdf");
   const [numPages, setNumPages] = useState(0);
@@ -187,6 +189,12 @@ export default function PdfEditorPage() {
             title="Toggle theme"
           >
             {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+          <button
+            onClick={() => router.push("/pdf/edit")}
+            className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors"
+          >
+            ✏️ Edit Text
           </button>
           <button
             onClick={exportPdf}
