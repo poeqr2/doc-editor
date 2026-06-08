@@ -49,19 +49,27 @@ export default function PdfEditorPage() {
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
 
   useEffect(() => {
-    const url = sessionStorage.getItem("pdf-file");
+    const dataUrl = sessionStorage.getItem("pdf-file");
     const name = sessionStorage.getItem("pdf-name");
-    if (!url) {
+    if (!dataUrl) {
       window.location.href = "/";
       return;
     }
-    setPdfUrl(url);
+    setPdfUrl(dataUrl);
     if (name) setPdfName(name);
 
-    // Pre-fetch PDF bytes for export
-    fetch(url).then(r => r.arrayBuffer()).then(bytes => {
-      setPdfBytes(bytes);
-    });
+    // Convert base64 data URL to ArrayBuffer for pdf-lib export
+    try {
+      const base64 = dataUrl.split(",")[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      setPdfBytes(bytes.buffer);
+    } catch {
+      console.error("Failed to decode PDF data URL");
+    }
   }, []);
 
   const pushUndo = useCallback(() => {

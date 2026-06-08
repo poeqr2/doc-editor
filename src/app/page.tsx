@@ -20,16 +20,28 @@ export default function Home() {
       return;
     }
 
-    const url = URL.createObjectURL(file);
-    if (type === "pdf") {
-      sessionStorage.setItem("pdf-file", url);
-      sessionStorage.setItem("pdf-name", file.name);
-      window.location.href = "/pdf";
-    } else {
-      sessionStorage.setItem("docx-file", url);
-      sessionStorage.setItem("docx-name", file.name);
-      window.location.href = "/word";
-    }
+    // Use FileReader to convert to base64 data URL so it survives full-page navigation
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      if (!dataUrl) {
+        setError("Failed to read file. Please try again.");
+        return;
+      }
+      if (type === "pdf") {
+        sessionStorage.setItem("pdf-file", dataUrl);
+        sessionStorage.setItem("pdf-name", file.name);
+        window.location.href = "/pdf";
+      } else {
+        sessionStorage.setItem("docx-file", dataUrl);
+        sessionStorage.setItem("docx-name", file.name);
+        window.location.href = "/word";
+      }
+    };
+    reader.onerror = () => {
+      setError("Failed to read file. Please try again.");
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleDrop = (e: React.DragEvent, type: "pdf" | "word") => {
