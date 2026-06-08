@@ -5,7 +5,6 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useTheme } from "@/components/ThemeProvider";
 import { extractPdfText } from "@/lib/pdfTextExtractor";
-import { PDFDocument, StandardFonts } from "pdf-lib";
 
 const RichTextEditor = dynamic(() => import("@/components/RichTextEditor"), {
   ssr: false,
@@ -55,6 +54,8 @@ export default function PdfTextEditorPage() {
     extract();
   }, []);
 
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+
   const handleContentChange = useCallback((newHtml: string) => {
     htmlRef.current = newHtml;
   }, []);
@@ -62,86 +63,44 @@ export default function PdfTextEditorPage() {
   const exportPdf = useCallback(async () => {
     setIsExporting(true);
     try {
-      // Create a new PDF from the edited HTML
-      const pdfDoc = await PDFDocument.create();
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const html2canvas = (await import("html2canvas-pro")).default;
+      const { jsPDF } = await import("jspdf");
 
-      // Parse HTML back to text blocks
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlRef.current, "text/html");
-      const elements = doc.body.children;
+      // Capture the editor content as an image
+      const el = editorContainerRef.current;
+      if (!el) throw new Error("Editor not found");
 
-      const pageWidth = 595; // A4
-      const pageHeight = 842;
-      const margin = 50;
-      const lineHeight = 16;
-      let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-      let y = pageHeight - margin;
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+      });
 
-      for (const el of Array.from(elements)) {
-        const tag = el.tagName.toLowerCase();
-        const text = el.textContent?.trim() || "";
-        if (!text) continue;
+      // Create PDF from canvas
+      const imgWidth = 210; // A4 width in mm
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const pdf = new jsPDF("p", "mm", "a4");
 
-        let fontSize = 12;
-        let usedFont = font;
+      let yPos = 0;
+      const pageHeight = 297; // A4 height in mm
 
-        if (tag === "h1") { fontSize = 24; usedFont = fontBold; }
-        else if (tag === "h2") { fontSize = 18; usedFont = fontBold; }
-        else if (tag === "h3") { fontSize = 14; usedFont = fontBold; }
+      // Handle multi-page
+      while (yPos < imgHeight) {
+        if (yPos > 0) pdf.addPage();
 
-        // Word wrap
-        const maxLineWidth = pageWidth - margin * 2;
-        const words = text.split(/\s+/);
-        const lines: string[] = [];
-        let currentLine = "";
+        pdf.addImage(
+          canvas.toDataURL("image/png"),
+          "PNG",
+          0,
+          -yPos,
+          imgWidth,
+          imgHeight
+        );
 
-        for (const word of words) {
-          const testLine = currentLine ? `${currentLine} ${word}` : word;
-          const textWidth = usedFont.widthOfTextAtSize(testLine, fontSize);
-          if (textWidth > maxLineWidth && currentLine) {
-            lines.push(currentLine);
-            currentLine = word;
-          } else {
-            currentLine = testLine;
-          }
-        }
-        if (currentLine) lines.push(currentLine);
-
-        // Check if we need a new page
-        const totalHeight = lines.length * (fontSize + 4);
-        if (y - totalHeight < margin) {
-          currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-          y = pageHeight - margin;
-        }
-
-        // Draw each line
-        for (const line of lines) {
-          if (y < margin) {
-            currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-            y = pageHeight - margin;
-          }
-          currentPage.drawText(line, {
-            x: margin,
-            y,
-            size: fontSize,
-            font: usedFont,
-          });
-          y -= fontSize + 4;
-        }
-
-        y -= 4; // gap between paragraphs
+        yPos += pageHeight;
       }
 
-      const pdfBytes = await pdfDoc.save();
-      const blob = new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `edited-${pdfName}`;
-      a.click();
-      URL.revokeObjectURL(url);
+      pdf.save(`edited-${pdfName}`);
     } catch (err) {
       console.error("Export failed:", err);
       alert("Failed to export PDF. See console for details.");
@@ -187,7 +146,7 @@ export default function PdfTextEditorPage() {
               <p className="text-muted text-sm">Extracting text from PDF...</p>
             </div>
           ) : isLoaded ? (
-            <div className="bg-card-bg border border-card-border rounded-xl overflow-hidden shadow-lg">
+            <div ref={editorContainerRef} className="bg-card-bg border border-card-border rounded-xl overflow-hidden shadow-lg">
               <div className="px-4 py-2 bg-surface/50 border-b border-card-border">
                 <p className="text-xs text-muted">
                   ✏️ Edit the text below — changes will be saved when you download.
