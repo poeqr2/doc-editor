@@ -1,7 +1,7 @@
 /**
- * Extract text from PDF by rendering it invisibly and reading the text layer DOM.
- * This uses pdf.js's built-in text extraction (which handles reading order correctly)
- * instead of manual coordinate sorting.
+ * Extract text from PDF → editable HTML.
+ * Simplest possible: page by page, items in stream order, line breaks on Y change.
+ * NO sorting, NO fancy grouping. Just raw text dump with page separation.
  */
 export async function extractPdfTextViaDom(pdfDataUrl: string): Promise<string> {
   // @ts-ignore — pdfjs-dist v6
@@ -14,73 +14,76 @@ export async function extractPdfTextViaDom(pdfDataUrl: string): Promise<string> 
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
   const pdf = await pdfjs.getDocument({ data: bytes }).promise;
-  const paragraphs: string[] = [];
+  const pages: string[] = [];
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: 1 });
+    const content = await page.getTextContent();
 
-    // Create a hidden container for text layer rendering
-    const container = document.createElement("div");
-    container.style.position = "absolute";
-    container.style.left = "-9999px";
-    container.style.top = "0";
-    container.style.width = `${viewport.width}px`;
-    container.style.height = `${viewport.height}px`;
-    document.body.appendChild(container);
+    // Collect all items with their raw positions
+    const items: { text: string; y: number; x: number }[] = [];
 
-    // Render the text layer using pdf.js
-    const textContent = await page.getTextContent();
+    for (const item of content.items) {
+      if (!("str" in item) || !item.str) continue;
+      const tx = item.transform;
+      items.push({
+        text: item.str,
+        y: tx[5], // raw PDF Y (bottom-up)
+        x: tx[4],
+      });
+    }
 
-    // pdf.js TextLayer renders spans with correct reading order positioning
-    const textLayer = new pdfjs.TextLayer({
-      textContentSource: textContent,
-      container,
-      viewport,
+    if (items.length === 0) continue;
+
+    // Sort by Y descending (top of page = highest Y in PDF coords), then X ascending
+    items.sort((a, b) => {
+      const yDiff = b.y - a.y; // descending
+      if (Math.abs(yDiff) > 2) return yDiff;
+      return a.x - b.x;
     });
-    await textLayer.render();
 
-    // Now read the rendered spans from DOM — they're in reading order!
-    const spans = container.querySelectorAll("span");
-    let lastY = -9999;
+    // Build text: group items on same line (similar Y), separate lines
+    const lines: string[] = [];
     let currentLine: string[] = [];
+    let lastY = items[0].y;
 
-    for (const span of spans) {
-      const text = span.textContent?.trim();
-      if (!text) continue;
-
-      // Get Y position from the span's transform
-      const style = span.style;
-      const transform = style.transform || "";
-      // Extract Y from matrix: matrix(1, 0, 0, 1, x, y)
-      const match = transform.match(/matrix\([^,]+,[^,]+,[^,]+,[^,]+,[^,]+,\s*([-\d.]+)\)/);
-      const y = match ? parseFloat(match[1]) : 0;
-
-      // If Y changed significantly, it's a new line
-      if (lastY > -9000 && Math.abs(y - lastY) > 2) {
-        if (currentLine.length > 0) {
-          paragraphs.push(currentLine.join(" "));
-          currentLine = [];
-        }
+    for (const item of items) {
+      if (Math.abs(item.y - lastY) > 2) {
+        // New line
+        lines.push(currentLine.join(" "));
+        currentLine = [];
       }
-
-      currentLine.push(text);
-      lastY = y;
+      currentLine.push(item.text);
+      lastY = item.y;
     }
+    if (currentLine.length > 0) lines.push(currentLine.join(" "));
 
-    if (currentLine.length > 0) {
-      paragraphs.push(currentLine.join(" "));
-    }
-
-    // Clean up
-    document.body.removeChild(container);
+    pages.push(lines.join("\n"));
   }
 
-  if (paragraphs.length === 0) return "<p></p>";
-  return paragraphs.map((p) => `<p>${esc(p)}</p>`).join("\n");
+  if (pages.length === 0) return "<p></p>";
+
+  // Wrap each page's text, separated by page breaks
+  const result: string[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    if (i > 0) {
+      // Page break marker
+      result.push('<div style="page-break-before: always; border-top: 2px dashed #ccc; margin: 20px 0; padding-top: 10px; font-size: 11px; color: #999;">— Page ' + (i + 1) + ' —</div>');
+    }
+    // Each line becomes a paragraph
+    const lines = pages[i].split("\n");
+    for (const line of lines) {
+      if (line.trim()) {
+        result.push(`<p>${esc(line)}</p>`);
+      }
+    }
+  }
+
+  return result.join("\n");
 }
 
-// Keep the old function for backwards compatibility
+// Keep interface for backwards compat
 export interface TextBlock {
   text: string;
   x: number;
@@ -115,7 +118,6 @@ export async function extractPdfText(pdfDataUrl: string): Promise<{
     const vp = page.getViewport({ scale: 1 });
     pageDimensions.push({ width: vp.width, height: vp.height });
     const content = await page.getTextContent();
-
     for (const item of content.items) {
       if (!("str" in item) || !item.str) continue;
       const tx = item.transform;
@@ -132,47 +134,8 @@ export async function extractPdfText(pdfDataUrl: string): Promise<{
     }
   }
 
-  // Try the DOM-based extraction first, fall back to dumb approach
-  try {
-    const html = await extractPdfTextViaDom(pdfDataUrl);
-    return { html, blocks: allBlocks, pageDimensions };
-  } catch {
-    // Fallback: simple concatenation without sorting
-    const html = buildDumbHtml(allBlocks);
-    return { html, blocks: allBlocks, pageDimensions };
-  }
-}
-
-function buildDumbHtml(blocks: TextBlock[]): string {
-  if (blocks.length === 0) return "<p></p>";
-
-  const pages = new Map<number, TextBlock[]>();
-  for (const b of blocks) {
-    if (!pages.has(b.pageNum)) pages.set(b.pageNum, []);
-    pages.get(b.pageNum)!.push(b);
-  }
-
-  const result: string[] = [];
-
-  for (const pageNum of Array.from(pages.keys()).sort((a, b) => a - b)) {
-    const pageBlocks = pages.get(pageNum)!;
-    // Don't sort — use content stream order (often reading order for simple PDFs)
-    let lastY = -9999;
-    let line: string[] = [];
-
-    for (const block of pageBlocks) {
-      if (lastY > -9000 && Math.abs(block.y - lastY) > 3) {
-        if (line.length > 0) result.push(line.join(" "));
-        line = [];
-      }
-      line.push(block.text);
-      lastY = block.y;
-    }
-    if (line.length > 0) result.push(line.join(" "));
-  }
-
-  if (result.length === 0) return "<p></p>";
-  return result.map((l) => `<p>${esc(l)}</p>`).join("\n");
+  const html = await extractPdfTextViaDom(pdfDataUrl);
+  return { html, blocks: allBlocks, pageDimensions };
 }
 
 function esc(t: string): string {
