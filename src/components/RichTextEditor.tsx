@@ -40,7 +40,7 @@ export default function RichTextEditor({ content, onChange }: RichTextEditorProp
   // After that, the editor owns its state — don't overwrite it.
   useEffect(() => {
     if (editor && content && !initializedRef.current) {
-      editor.commands.setContent(content, false);
+      editor.commands.setContent(content);
       initializedRef.current = true;
     }
   }, [content, editor]);
