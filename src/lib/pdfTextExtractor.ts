@@ -1,7 +1,6 @@
 /**
  * Extract text from PDF → editable HTML.
- * DUMB approach: just dump all text in reading order.
- * No fancy grouping. TipTap handles formatting.
+ * Robust approach: sort all items into reading order, then dump.
  */
 export interface TextBlock {
   text: string;
@@ -73,56 +72,87 @@ function buildSimpleHtml(blocks: TextBlock[]): string {
   for (const pageNum of Array.from(pages.keys()).sort((a, b) => a - b)) {
     const pageBlocks = pages.get(pageNum)!;
 
-    // Sort: top-to-bottom, then left-to-right
-    // Use a reasonable Y tolerance — items on the same visual line
-    // have Y values within ~2px of each other
-    pageBlocks.sort((a, b) => {
-      // Primary sort by Y (top = small Y first)
-      const yDiff = a.y - b.y;
-      if (Math.abs(yDiff) > 2) return yDiff;
-      // Secondary sort by X (left = small X first)
-      return a.x - b.x;
-    });
+    // Step 1: Sort into rough reading order
+    // Use row-binning: group items into rows by Y proximity, then sort rows top-to-bottom,
+    // and within each row sort left-to-right.
+    const sorted = sortIntoReadingOrder(pageBlocks);
 
-    // Walk through and build lines
-    // A "line" = consecutive items where Y barely changes
-    let currentLineY = -9999;
-    let currentLineItems: string[] = [];
+    // Step 2: Walk through sorted items and build lines
+    let lines: string[][] = [[]];
+    let lastY = -9999;
 
-    const flushLine = () => {
-      if (currentLineItems.length > 0) {
-        result.push(currentLineItems.join(" "));
-        currentLineItems = [];
+    for (const block of sorted) {
+      // New line if Y changed by more than half the font size
+      const yDelta = Math.abs(block.y - lastY);
+      const threshold = block.fontSize * 0.6;
+
+      if (lastY > -9000 && yDelta > threshold) {
+        lines.push([]);
       }
-    };
+      lines[lines.length - 1].push(block.text);
+      lastY = block.y;
+    }
 
-    for (const block of pageBlocks) {
-      const yDelta = Math.abs(block.y - currentLineY);
-
-      if (currentLineY < -9000) {
-        // First item on this page
-        currentLineY = block.y;
-        currentLineItems.push(block.text);
-      } else if (yDelta <= 2) {
-        // Same line (Y barely changed)
-        // Add space if there's a horizontal gap
-        if (currentLineItems.length > 0) {
-          currentLineItems.push(" ");
-        }
-        currentLineItems.push(block.text);
-      } else {
-        // New line
-        flushLine();
-        currentLineY = block.y;
-        currentLineItems.push(block.text);
+    // Convert lines to text
+    for (const line of lines) {
+      if (line.length > 0) {
+        result.push(line.join(" "));
       }
     }
-    flushLine();
   }
 
-  // Wrap each line in <p> tags — TipTap will handle it
+  // Wrap each line in <p> tags
   if (result.length === 0) return "<p></p>";
   return result.map((line) => `<p>${esc(line)}</p>`).join("");
+}
+
+/**
+ * Sort blocks into reading order using row-binning.
+ * Items with similar Y values are grouped into rows,
+ * rows are sorted top-to-bottom, items within row sorted left-to-right.
+ */
+function sortIntoReadingOrder(blocks: TextBlock[]): TextBlock[] {
+  if (blocks.length <= 1) return blocks;
+
+  // Find the median font size to determine row height threshold
+  const sizes = blocks.map((b) => b.fontSize).sort((a, b) => a - b);
+  const medianSize = sizes[Math.floor(sizes.length / 2)];
+  const rowThreshold = medianSize * 0.6;
+
+  // Bin items into rows by Y proximity
+  const rows: TextBlock[][] = [];
+  const sorted = [...blocks].sort((a, b) => a.y - b.y);
+
+  for (const block of sorted) {
+    // Find an existing row this item belongs to
+    let placed = false;
+    for (const row of rows) {
+      // Check if block's Y is close to the row's average Y
+      const avgY = row.reduce((s, b) => s + b.y, 0) / row.length;
+      if (Math.abs(block.y - avgY) <= rowThreshold) {
+        row.push(block);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      rows.push([block]);
+    }
+  }
+
+  // Sort rows by average Y, then items within each row by X
+  rows.sort((a, b) => {
+    const avgA = a.reduce((s, b) => s + b.y, 0) / a.length;
+    const avgB = b.reduce((s, b) => s + b.y, 0) / b.length;
+    return avgA - avgB;
+  });
+
+  const result: TextBlock[] = [];
+  for (const row of rows) {
+    row.sort((a, b) => a.x - b.x);
+    result.push(...row);
+  }
+  return result;
 }
 
 function esc(t: string): string {
